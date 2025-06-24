@@ -1,0 +1,15 @@
+[project]
+name = "ai-cti"
+version = "0.1.0"
+description = "Default template for PDM package"
+authors = [
+    {name = "Chukwuma Mabi", email = "mabichukwuma@gmail.com"},
+]
+dependencies = ["llama-index>=0.12.43", "streamlit>=1.46.0", "openai>=1.91.0", "feedparser>=6.0.11", "beautifulsoup4>=4.13.4", "requests>=2.32.4", "python-dotenv>=1.1.1"]
+requires-python = "==3.12.*"
+readme = "README.md"
+license = {text = "MIT"}
+
+
+[tool.pdm]
+distribution = false
