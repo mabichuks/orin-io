@@ -1,15 +1,16 @@
 import streamlit as st
-import pandas as pd
 from datetime import datetime
 from agent import ThreatIntelligenceAgent
 from constants import openai_api_key
+from bs4 import BeautifulSoup
+import re
 
 # Set page configuration
 st.set_page_config(
-    page_title="ICS Threat Intelligence System",
+    page_title="ICS Security Advisories",
     page_icon="🛡️",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # Custom CSS for better styling
@@ -29,18 +30,51 @@ st.markdown("""
         padding: 1rem;
         margin: 0.5rem 0;
         background-color: #f8f9fa;
+        border-left: 4px solid #2e7bb8;
+    }
+    .advisory-title {
+        font-weight: bold;
+        font-size: 1.1rem;
+        color: #1f4e79;
+        margin-bottom: 0.5rem;
+    }
+    .advisory-meta {
+        color: #666;
+        font-size: 0.9rem;
+        margin-bottom: 0.5rem;
+    }
+    .advisory-summary {
+        line-height: 1.5;
     }
     .mitre-technique {
         background-color: #e3f2fd;
         padding: 0.2rem 0.5rem;
         border-radius: 4px;
-        margin: 0.2rem;
+        margin: 0.2rem 0.2rem 0.2rem 0;
         display: inline-block;
         font-size: 0.85rem;
+        color: #1565c0;
     }
-    .confidence-high { border-left: 4px solid #4caf50; }
-    .confidence-medium { border-left: 4px solid #ff9800; }
-    .confidence-low { border-left: 4px solid #f44336; }
+    .confidence-badge {
+        background-color: #4caf50;
+        color: white;
+        padding: 0.2rem 0.5rem;
+        border-radius: 12px;
+        font-size: 0.8rem;
+        margin-left: 0.5rem;
+    }
+    .confidence-medium {
+        background-color: #ff9800;
+    }
+    .confidence-low {
+        background-color: #f44336;
+    }
+    .chat-container {
+        background-color: #f8f9fa;
+        border-radius: 10px;
+        padding: 1rem;
+        margin-top: 2rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -53,37 +87,124 @@ def check_api_key():
 @st.cache_resource
 def initialize_agent():
     """Initialize the threat intelligence agent (cached)"""
-    with st.spinner("Initializing threat intelligence system..."):
-        return ThreatIntelligenceAgent()
+    with st.spinner("Initializing system..."):
+        agent = ThreatIntelligenceAgent()
+        # Store agent in session state for access in other functions
+        st.session_state['agent'] = agent
+        return agent
+
+def clean_html_text(html_text: str, max_length: int = 300) -> str:
+    """
+    Clean HTML tags from text and truncate to specified length
+    """
+    if not html_text:
+        return "No summary available"
+    
+    # Parse HTML and extract text with proper separator
+    soup = BeautifulSoup(html_text, 'html.parser')
+    
+    # Add spaces around block elements to prevent word concatenation
+    for tag in soup.find_all(['p', 'div', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'br']):
+        tag.insert_before(' ')
+        tag.insert_after(' ')
+    
+    # Extract clean text
+    clean_text = soup.get_text(separator=' ', strip=True)
+    
+    # Clean up multiple spaces and newlines
+    clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+    
+    # Remove any remaining problematic characters that might cause formatting issues
+    clean_text = re.sub(r'[^\w\s\-.,;:!?()\[\]{}"\'/]', '', clean_text)
+    
+    # Truncate if too long
+    if len(clean_text) > max_length:
+        clean_text = clean_text[:max_length] + "..."
+    
+    return clean_text
+
+@st.cache_data
+def generate_summary(advisory_id: str, full_content: str, _llm) -> str:
+    """
+    Use LLM to generate a concise summary of the advisory content
+    Cached based on advisory_id to avoid expensive re-generation
+    """
+    try:
+        summary_prompt = f"""
+        Please provide a concise 2-3 sentence summary of this ICS security advisory. Focus on:
+        - What the vulnerability is
+        - What systems are affected
+        - The potential impact
+        
+        Advisory content:
+        {full_content[:2000]}  # Limit content to avoid token limits
+        
+        Provide only the summary, no additional text:
+        """
+        
+        response = _llm.complete(summary_prompt)
+        return response.text.strip()
+    except Exception as e:
+        # Fallback to cleaned HTML if LLM fails
+        return clean_html_text(full_content, max_length=200)
 
 def display_advisory_card(advisory):
-    """Display an advisory as a card"""
-    confidence_class = f"confidence-{advisory.get('confidence', 'medium').lower()}"
+    """Display an advisory as a card with MITRE ATT&CK mapping"""
+    # Check if we have a cached summary first, otherwise generate one
+    advisory_id = advisory.get('id', 'unknown')
+    
+    # Try to get cached summary from advisory data first
+    if 'llm_summary' in advisory and advisory['llm_summary']:
+        clean_summary = advisory['llm_summary']
+    else:
+        # Generate LLM summary (cached by advisory ID)
+        agent = st.session_state.get('agent')
+        if agent and agent.llm:
+            clean_summary = generate_summary(advisory_id, advisory.get('summary', ''), agent.llm)
+        else:
+            # Fallback to cleaned HTML
+            clean_summary = clean_html_text(advisory.get('summary', ''), max_length=400)
+    
+    # Clean and escape the title to prevent formatting issues
+    clean_title = clean_html_text(advisory.get('title', 'No Title'), max_length=100)
+    
+    # Get MITRE techniques (removed confidence)
+    mitre_techniques = advisory.get('mitre_techniques', [])
+    
+    # Create MITRE techniques HTML (without confidence)
+    mitre_html = ""
+    if mitre_techniques:
+        mitre_html = "<div style='margin: 0.5rem 0;'><strong>MITRE ATT&CK:</strong><br>"
+        for technique in mitre_techniques:
+            mitre_html += f'<span class="mitre-technique">{technique}</span>'
+        mitre_html += "</div>"
     
     with st.container():
-        st.markdown(f'<div class="advisory-card {confidence_class}">', unsafe_allow_html=True)
-        
-        col1, col2 = st.columns([3, 1])
-        
-        with col1:
-            st.markdown(f"**{advisory['title']}**")
-            st.markdown(f"*{advisory['id']} | Published: {advisory['published'][:10]}*")
-            st.write(advisory['summary'])
-            
-            # Display MITRE techniques
-            if advisory.get('mitre_techniques'):
-                st.markdown("**MITRE ATT&CK Techniques:**")
-                techniques_html = ""
-                for technique in advisory['mitre_techniques']:
-                    techniques_html += f'<span class="mitre-technique">{technique}</span>'
-                st.markdown(techniques_html, unsafe_allow_html=True)
-        
-        with col2:
-            st.markdown(f"**Confidence:** {advisory.get('confidence', 'N/A').title()}")
-            if advisory.get('link'):
-                st.markdown(f"[View Advisory]({advisory['link']})")
-        
-        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class="advisory-card">
+            <div class="advisory-title">{clean_title}</div>
+            <div class="advisory-meta">
+                {advisory['id']} | Published: {advisory['published'][:10]}
+            </div>
+            <div class="advisory-summary">{clean_summary}</div>
+            {mitre_html}
+            <div style="margin-top: 0.5rem;">
+                <a href="{advisory['link']}" target="_blank">View Full Advisory →</a>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+def rag_query(agent, query: str) -> str:
+    """
+    Perform RAG query: retrieve top 4 relevant documents and refine with LLM
+    """
+    try:
+        # Use the agent's index manager to get the query engine
+        query_engine = agent.index_manager.get_query_engine()
+        response = query_engine.query(query)
+        return str(response)
+    except Exception as e:
+        return f"Error processing query: {str(e)}"
 
 def main():
     # Check API key
@@ -92,314 +213,125 @@ def main():
     # Header
     st.markdown("""
     <div class="main-header">
-        <h1>🛡️ ICS Threat Intelligence System</h1>
-        <p>AI-Powered Industrial Control Systems Security Advisory Analysis</p>
+        <h1>🛡️ ICS Security Advisories</h1>
+        <p>Latest Industrial Control Systems Security Intelligence</p>
     </div>
     """, unsafe_allow_html=True)
     
     # Initialize agent
     agent = initialize_agent()
     
-    # Sidebar
-    with st.sidebar:
-        st.header("🔧 System Controls")
-        
-        # Cache status
-        try:
-            cache_info = agent.get_cache_info()
-            st.subheader("📊 Cache Status")
-            
-            if cache_info['status'] == 'loaded':
-                st.success(f"✅ Loaded: {cache_info['count']} advisories")
-                st.info(f"Latest: {cache_info['latest_advisory_date']}")
-            elif cache_info['status'] == 'empty':
-                st.warning("⚠️ No data loaded")
-            else:
-                st.error(f"❌ Error: {cache_info.get('error', 'Unknown')}")
-                
-        except Exception as e:
-            st.error(f"Error checking cache: {str(e)}")
-        
-        st.markdown("---")
-        
-        # Check for updates
-        if st.button("🔍 Check for Updates"):
-            with st.spinner("Checking for new advisories..."):
-                try:
-                    update_info = agent.check_for_updates()
-                    
-                    if update_info['has_updates']:
-                        st.success(f"🆕 {update_info['new_count']} new advisories available!")
-                        
-                        # Show preview of new advisories
-                        if update_info.get('new_advisories'):
-                            st.write("**Preview of new advisories:**")
-                            for adv in update_info['new_advisories']:
-                                st.write(f"• {adv['id']}: {adv['title'][:50]}...")
-                    else:
-                        st.info("✅ Knowledge base is up to date")
-                        
-                except Exception as e:
-                    st.error(f"Error checking updates: {str(e)}")
-        
-        # Refresh options
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("🔄 Smart Update", type="primary", help="Only processes new advisories"):
-                with st.spinner("Updating with new advisories..."):
-                    try:
-                        result = agent.refresh_knowledge_base(force_rebuild=False)
-                        st.success(result)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Update error: {str(e)}")
-        
-        with col2:
-            if st.button("🔨 Force Rebuild", help="Rebuilds entire knowledge base"):
-                with st.spinner("Rebuilding entire knowledge base..."):
-                    try:
-                        result = agent.refresh_knowledge_base(force_rebuild=True)
-                        st.success(result)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Rebuild error: {str(e)}")
-        
-        st.markdown("---")
-        
-        # MITRE ATT&CK Statistics
-        st.header("📊 MITRE ATT&CK Statistics")
-        try:
-            stats = agent.get_mitre_statistics()
-            st.metric("Total Advisories", stats['total_advisories'])
-            
-            # Confidence distribution
-            st.subheader("Confidence Distribution")
-            for confidence, count in stats['confidence_distribution'].items():
-                st.write(f"• {confidence.title()}: {count}")
-            
-            # Most common techniques
-            st.subheader("Top Techniques")
-            for technique, count in stats['most_common_techniques'][:3]:
-                st.write(f"• {technique}: {count}")
-                
-        except Exception as e:
-            st.error(f"Error loading statistics: {str(e)}")
+    # Main content
+    col1, col2 = st.columns([1, 1])
     
-    # Main content area
-    tab1, tab2, tab3, tab4 = st.tabs(["📋 Advisory Dashboard", "💬 Chat Interface", "🔍 Search & Analysis", "📈 Threat Intelligence"])
-    
-    with tab1:
-        st.header("Latest ICS Security Advisories")
+    with col1:
+        st.header("📋 Latest Security Advisories")
         
         try:
             # Get top 4 advisories
             advisories = agent.get_advisory_summary(limit=4)
             
             if advisories:
-                st.success(f"Displaying top {len(advisories)} advisories from CISA ICS feed")
+                st.success(f"Showing {len(advisories)} most recent advisories")
                 
                 for advisory in advisories:
                     display_advisory_card(advisory)
             else:
-                st.warning("No advisories found. Try refreshing the knowledge base.")
+                st.warning("No advisories found. The system may need to fetch new data.")
+                if st.button("🔄 Refresh Data"):
+                    with st.spinner("Fetching latest advisories..."):
+                        try:
+                            agent.refresh_knowledge_base()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error refreshing data: {str(e)}")
                 
         except Exception as e:
             st.error(f"Error loading advisories: {str(e)}")
     
-    with tab2:
-        st.header("💬 Chat with Threat Intelligence")
+    with col2:
+        st.header("💬 Ask About Security Advisories")
         
-        # Chat interface
-        if "messages" not in st.session_state:
-            st.session_state.messages = []
-        
-        # Display chat messages
-        for message in st.session_state.messages:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
-        
-        # Chat input
-        if prompt := st.chat_input("Ask about ICS security advisories, vulnerabilities, or threat intelligence..."):
-            # Add user message to chat history
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
+        # Chat interface in a container
+        with st.container():
+            st.markdown('<div class="chat-container">', unsafe_allow_html=True)
             
-            # Generate assistant response
-            with st.chat_message("assistant"):
-                with st.spinner("Analyzing threat intelligence..."):
-                    try:
-                        response = agent.query(prompt)
-                        st.markdown(response)
-                        # Add assistant response to chat history
-                        st.session_state.messages.append({"role": "assistant", "content": response})
-                    except Exception as e:
-                        error_msg = f"Error processing query: {str(e)}"
-                        st.error(error_msg)
-                        st.session_state.messages.append({"role": "assistant", "content": error_msg})
-        
-        # Clear chat button
-        if st.button("🗑️ Clear Chat History"):
-            st.session_state.messages = []
-            st.rerun()
-    
-    with tab3:
-        st.header("🔍 Search & Analysis")
-        
-        col1, col2 = st.columns([2, 1])
-        
-        with col1:
-            st.subheader("Search Advisories")
-            search_query = st.text_input(
-                "Enter search query:",
-                placeholder="e.g., Siemens vulnerabilities, SQL injection, remote code execution"
-            )
+            # Initialize chat history
+            if "messages" not in st.session_state:
+                st.session_state.messages = []
             
-            if st.button("🔍 Search") and search_query:
-                with st.spinner("Searching advisories..."):
-                    try:
-                        response = agent.query(f"Search for: {search_query}")
-                        st.markdown("### Search Results")
-                        st.markdown(response)
-                    except Exception as e:
-                        st.error(f"Search error: {str(e)}")
-        
-        with col2:
-            st.subheader("Filter by MITRE Technique")
+            # Display chat messages
+            for message in st.session_state.messages:
+                with st.chat_message(message["role"]):
+                    st.markdown(message["content"])
             
-            # Common MITRE techniques dropdown
-            mitre_techniques = [
-                "T0819 - Exploit Public-Facing Application",
-                "T0815 - Denial of Service", 
-                "T0818 - Engineering Workstation Compromise",
-                "T0883 - Internet Accessible Device",
-                "T0866 - Exploitation of Remote Services"
-            ]
-            
-            selected_technique = st.selectbox(
-                "Select MITRE ATT&CK Technique:",
-                ["Select a technique..."] + mitre_techniques
-            )
-            
-            if selected_technique and selected_technique != "Select a technique...":
-                technique_id = selected_technique.split(" - ")[0]
+            # Chat input
+            if prompt := st.chat_input("Ask about ICS security advisories, vulnerabilities, or threats..."):
+                # Add user message to chat history
+                st.session_state.messages.append({"role": "user", "content": prompt})
+                with st.chat_message("user"):
+                    st.markdown(prompt)
                 
-                if st.button("🎯 Filter by Technique"):
-                    with st.spinner("Filtering advisories..."):
+                # Generate assistant response using RAG
+                with st.chat_message("assistant"):
+                    with st.spinner("Searching advisories..."):
                         try:
-                            matching_advisories = agent.search_by_mitre_technique(technique_id)
-                            
-                            if matching_advisories:
-                                st.markdown(f"### Advisories mapped to {technique_id}")
-                                for advisory in matching_advisories:
-                                    with st.expander(f"{advisory['id']} - {advisory['title']}"):
-                                        st.write(advisory['summary'])
-                                        st.markdown(f"**Confidence:** {advisory['confidence']}")
-                                        if advisory.get('link'):
-                                            st.markdown(f"[View Full Advisory]({advisory['link']})")
-                            else:
-                                st.info(f"No advisories found for technique {technique_id}")
-                                
+                            response = rag_query(agent, prompt)
+                            st.markdown(response)
+                            # Add assistant response to chat history
+                            st.session_state.messages.append({"role": "assistant", "content": response})
                         except Exception as e:
-                            st.error(f"Filter error: {str(e)}")
+                            error_msg = f"Error processing query: {str(e)}"
+                            st.error(error_msg)
+                            st.session_state.messages.append({"role": "assistant", "content": error_msg})
+            
+            # Clear chat button
+            if st.session_state.messages:
+                if st.button("🗑️ Clear Chat"):
+                    st.session_state.messages = []
+                    st.rerun()
+            
+            st.markdown('</div>', unsafe_allow_html=True)
     
-    with tab4:
-        st.header("📈 Comprehensive Threat Intelligence")
-        
-        col1, col2 = st.columns([3, 1])
-        
-        with col1:
-            if st.button("📊 Generate Threat Intelligence Report", type="primary"):
-                with st.spinner("Generating comprehensive threat intelligence report..."):
-                    try:
-                        report = agent.get_threat_intelligence_summary()
-                        st.markdown("### Threat Intelligence Report")
-                        st.markdown(report)
-                    except Exception as e:
-                        st.error(f"Error generating report: {str(e)}")
-        
-        with col2:
-            st.subheader("Quick Actions")
-            
-            if st.button("🔥 Critical Vulnerabilities"):
-                with st.spinner("Analyzing critical vulnerabilities..."):
-                    try:
-                        response = agent.query("What are the most critical vulnerabilities in the latest advisories? Focus on those with high severity or potential for remote code execution.")
-                        st.markdown("### Critical Vulnerabilities")
-                        st.markdown(response)
-                    except Exception as e:
-                        st.error(f"Error: {str(e)}")
-            
-            if st.button("🎯 Attack Patterns"):
-                with st.spinner("Analyzing attack patterns..."):
-                    try:
-                        response = agent.query("What are the common attack patterns and MITRE ATT&CK techniques seen in recent ICS advisories?")
-                        st.markdown("### Attack Patterns Analysis")
-                        st.markdown(response)
-                    except Exception as e:
-                        st.error(f"Error: {str(e)}")
-            
-            if st.button("🛡️ Defense Recommendations"):
-                with st.spinner("Generating defense recommendations..."):
-                    try:
-                        response = agent.query("Based on the latest ICS security advisories, what are the key security recommendations and mitigation strategies?")
-                        st.markdown("### Defense Recommendations")
-                        st.markdown(response)
-                    except Exception as e:
-                        st.error(f"Error: {str(e)}")
-        
-        # Additional metrics and visualizations
-        st.markdown("---")
-        st.subheader("📊 Advisory Metrics")
-        
+    # Footer with system info
+    st.markdown("---")
+    
+    col1, col2, col3 = st.columns([1, 1, 1])
+    
+    with col1:
         try:
-            advisories = agent.get_advisories_data()
-            
-            if advisories:
-                # Create metrics dataframe
-                df_data = []
-                for advisory in advisories:
-                    mitre_mapping = advisory.get('mitre_mapping', {})
-                    df_data.append({
-                        'Advisory ID': advisory['id'],
-                        'Title': advisory['title'][:50] + '...' if len(advisory['title']) > 50 else advisory['title'],
-                        'Published': advisory['published'][:10],
-                        'MITRE Techniques': len(mitre_mapping.get('mapped_techniques', [])),
-                        'Confidence': mitre_mapping.get('confidence', 'N/A').title()
-                    })
-                
-                df = pd.DataFrame(df_data)
-                st.dataframe(df, use_container_width=True)
-                
-                # Summary metrics
-                col1, col2, col3, col4 = st.columns(4)
-                
-                with col1:
-                    st.metric("Total Advisories", len(advisories))
-                
-                with col2:
-                    high_confidence = sum(1 for a in advisories 
-                                        if a.get('mitre_mapping', {}).get('confidence') == 'high')
-                    st.metric("High Confidence Mappings", high_confidence)
-                
-                with col3:
-                    total_techniques = sum(len(a.get('mitre_mapping', {}).get('mapped_techniques', [])) 
-                                         for a in advisories)
-                    st.metric("Total MITRE Mappings", total_techniques)
-                
-                with col4:
-                    avg_techniques = total_techniques / len(advisories) if advisories else 0
-                    st.metric("Avg Techniques per Advisory", f"{avg_techniques:.1f}")
-                    
-        except Exception as e:
-            st.error(f"Error loading metrics: {str(e)}")
+            cache_info = agent.get_cache_info()
+            if cache_info['status'] == 'loaded':
+                st.metric("📊 Advisories Loaded", cache_info['count'])
+            else:
+                st.metric("📊 Advisories Loaded", "0")
+        except:
+            st.metric("📊 Advisories Loaded", "Error")
+    
+    with col2:
+        try:
+            cache_info = agent.get_cache_info()
+            if cache_info['status'] == 'loaded':
+                st.metric("📅 Latest Advisory", cache_info.get('latest_advisory_date', 'Unknown'))
+            else:
+                st.metric("📅 Latest Advisory", "None")
+        except:
+            st.metric("📅 Latest Advisory", "Error")
+    
+    with col3:
+        if st.button("🔄 Refresh System"):
+            with st.spinner("Refreshing..."):
+                try:
+                    result = agent.refresh_knowledge_base()
+                    st.success("System refreshed successfully!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Refresh failed: {str(e)}")
     
     # Footer
-    st.markdown("---")
     st.markdown("""
-    <div style="text-align: center; color: #666; padding: 1rem;">
-        <p>🛡️ ICS Threat Intelligence System | Powered by LlamaIndex & OpenAI | Data from CISA ICS Advisories</p>
+    <div style="text-align: center; color: #666; padding: 1rem; margin-top: 2rem;">
+        <p>🛡️ ICS Security Advisory System | Data from CISA ICS Advisories</p>
         <p><small>Last updated: {}</small></p>
     </div>
     """.format(datetime.now().strftime("%Y-%m-%d %H:%M:%S")), unsafe_allow_html=True)

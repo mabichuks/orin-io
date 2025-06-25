@@ -73,12 +73,13 @@ class ThreatIntelligenceAgent:
             summary = {
                 'id': advisory['id'],
                 'title': advisory['title'],
-                'summary': advisory['summary'][:200] + '...' if len(advisory['summary']) > 200 else advisory['summary'],
+                'summary': advisory['summary'],
                 'published': advisory['published'],
                 'link': advisory['link'],
                 'mitre_techniques': advisory.get('mitre_mapping', {}).get('mapped_techniques', []),
                 'confidence': advisory.get('mitre_mapping', {}).get('confidence', 'N/A')
             }
+            print(f"Advisory Summary: {summary}")
             summary_advisories.append(summary)
         
         return summary_advisories
