@@ -3,8 +3,9 @@ import json
 from typing import List, Dict, Any
 from llama_index.core import VectorStoreIndex, Document, StorageContext, load_index_from_storage
 from llama_index.core import Settings
+from llama_index.core.prompts import PromptTemplate
 from tools import fetch_cisa_advisories, map_to_mitre_attack, create_mitre_embeddings
-from constants import embed_model,llm_model,  INDEX_PERSIST_PATH
+from constants import embed_model, llm_model, INDEX_PERSIST_PATH, ENHANCED_RAG_TEMPLATE
 
 class IndexManager:
     def __init__(self):
@@ -199,12 +200,19 @@ class IndexManager:
     
     def get_query_engine(self):
         """
-        Get a query engine for the index
+        Get a query engine for the index with enhanced RAG template
         """
         index = self.get_index()
+        
+        # Create enhanced prompt template
+        qa_prompt = PromptTemplate(ENHANCED_RAG_TEMPLATE)
+        print(f"Using enhanced RAG template for query engine: {qa_prompt.template}...")  # Preview first 100 chars
+        
         return index.as_query_engine(
             similarity_top_k=5,
             llm=self.llm,
+            text_qa_template=qa_prompt,
+            response_mode="compact"
         )
     
     def get_advisories_data(self) -> List[Dict[str, Any]]:
@@ -264,10 +272,7 @@ class IndexManager:
             # Map to MITRE ATT&CK techniques using enhanced two-stage approach
             mitre_mapping = map_to_mitre_attack(
                 advisory['content'], 
-                self.llm, 
-                self.embed_model, 
                 self.mitre_embeddings,
-                self.mitre_techniques
             )
             
             # Create enhanced content with MITRE mapping
