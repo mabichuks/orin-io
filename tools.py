@@ -4,39 +4,13 @@ import json
 from datetime import datetime
 from typing import List, Dict, Any
 from llama_index.core.tools import FunctionTool
-from constants import CISA_ICS_RSS_URL, MAX_ADVISORIES, MITRE_MAPPING_PROMPT, embed_model, llm_model
-
-REFINED_PROMPT_TEMPLATE = """
-You are a cybersecurity expert analyzing an ICS (Industrial Control Systems) security advisory.
-Your task is to map this advisory to the most relevant MITRE ATT&CK techniques.
-
-IMPORTANT: You have been provided with pre-filtered candidate techniques that are most likely relevant.
-Focus your analysis on these candidates, but you may also suggest if none are truly appropriate.
-
-Advisory Content:
-{advisory_content}
-
-Candidate MITRE ATT&CK Techniques (pre-filtered for relevance):
-{techniques_to_analyze}
-
-Instructions:
-1. Analyze the advisory for attack vectors, vulnerabilities, and potential impacts
-2. Map to 1-3 most relevant techniques from the candidates provided
-3. Provide confidence level (high/medium/low) based on how well the technique matches
-4. Give brief reasoning for each mapping
-
-Respond with a valid JSON object in this exact format:
-{{
-    "mapped_techniques": ["T0XXX", "T0YYY"],
-    "reasoning": {{
-        "T0XXX": "Brief explanation why this technique applies",
-        "T0YYY": "Brief explanation why this technique applies"
-    }},
-    "confidence": "high|medium|low",
-    "similarity_scores": {{"T0XXX": 0.85, "T0YYY": 0.72}}
-}}
-Return only valid JSON. Do not include ```json or any markdown formatting. No explanation. Just output raw JSON.
-"""
+from constants import (
+    CISA_ICS_RSS_URL, 
+    MAX_ADVISORIES, 
+    REFINED_MITRE_PROMPT_TEMPLATE, 
+    embed_model, 
+    llm_model
+)
 
 def create_mitre_embeddings(embed_model):
     """
@@ -127,8 +101,8 @@ def map_to_mitre_attack(advisory_content: str, mitre_embeddings=None) -> Dict[st
         # Use candidate techniques if available, otherwise full set
         techniques_to_analyze = candidate_techniques if candidate_techniques else mitre_data
         
-        # Enhanced prompt for refined analysis
-        refined_prompt = REFINED_PROMPT_TEMPLATE.format(
+        # Enhanced prompt for refined analysis using constant
+        refined_prompt = REFINED_MITRE_PROMPT_TEMPLATE.format(
             advisory_content=advisory_content,
             techniques_to_analyze=json.dumps(techniques_to_analyze, indent=2)
         )
@@ -139,28 +113,7 @@ def map_to_mitre_attack(advisory_content: str, mitre_embeddings=None) -> Dict[st
         mapping = json.loads(response.text)
         print(f"Final mapping: {mapping}...")
         return mapping
-        # Try to parse JSON response
-        # try:
-        #     mapping = json.loads(response.text)
-            
-            # Validate the response structure
-            # if not isinstance(mapping.get('mapped_techniques'), list):
-            #     raise ValueError("Invalid mapped_techniques format")
-            
-            # Add embedding similarity scores if available
-            # if candidate_techniques:
-            #     candidates_list = find_similar_mitre_techniques(
-            #         advisory_content, embed_model, mitre_embeddings, top_k=5
-            #     )
-            #     similarity_scores = {
-            #         cand['technique_id']: round(cand['similarity'], 3)
-            #         for cand in candidates_list
-            #     }
-            #     mapping['embedding_similarities'] = similarity_scores
-        #     print(f"Final mapping: {mapping}...")
-        #     return mapping
-        # except Exception as e:
-        #     print(f"Error parsing LLM response: {e}")
+        
     except Exception as e:
         print(f"Error in map_to_mitre_attack: {e}")
 

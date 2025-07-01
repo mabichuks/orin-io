@@ -3,7 +3,10 @@ from llama_index.core.agent import ReActAgent
 from llama_index.core.tools import QueryEngineTool, ToolMetadata
 from tools import create_advisory_fetch_tool, create_mitre_mapping_tool
 from indexmanager import IndexManager
-from constants import llm_model
+from constants import llm_model, ADVISORY_SUMMARY_PROMPT_TEMPLATE, THREAT_INTELLIGENCE_SUMMARY_PROMPT
+from bs4 import BeautifulSoup
+import re
+import streamlit as st
 
 class ThreatIntelligenceAgent:
     def __init__(self):
@@ -60,6 +63,112 @@ class ThreatIntelligenceAgent:
             return str(response)
         except Exception as e:
             return f"Error processing query: {str(e)}"
+    
+    def rag_query(self, query: str) -> str:
+        """
+        Perform RAG query: retrieve top 4 relevant documents and refine with LLM
+        """
+        try:
+            # Use the agent's index manager to get the query engine
+            query_engine = self.index_manager.get_query_engine()
+            response = query_engine.query(query)
+            return str(response)
+        except Exception as e:
+            return f"Error processing query: {str(e)}"
+    
+    def clean_html_text(self, html_text: str, max_length: int = 300) -> str:
+        """
+        Clean HTML tags from text and truncate to specified length
+        """
+        if not html_text:
+            return "No summary available"
+        
+        # Parse HTML and extract text with proper separator
+        soup = BeautifulSoup(html_text, 'html.parser')
+        
+        # Add spaces around block elements to prevent word concatenation
+        for tag in soup.find_all(['p', 'div', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'br']):
+            tag.insert_before(' ')
+            tag.insert_after(' ')
+        
+        # Extract clean text
+        clean_text = soup.get_text(separator=' ', strip=True)
+        
+        # Clean up multiple spaces and newlines
+        clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+        
+        # Remove any remaining problematic characters that might cause formatting issues
+        clean_text = re.sub(r'[^\w\s\-.,;:!?()\[\]{}"\'/]', '', clean_text)
+        
+        # Truncate if too long
+        if len(clean_text) > max_length:
+            clean_text = clean_text[:max_length] + "..."
+        
+        return clean_text
+
+    @st.cache_data
+    def generate_summary(_self, advisory_id: str, full_content: str) -> str:
+        """
+        Use LLM to generate a concise summary of the advisory content
+        Cached based on advisory_id to avoid expensive re-generation
+        """
+        try:
+            # Use the prompt template from constants
+            summary_prompt = ADVISORY_SUMMARY_PROMPT_TEMPLATE.format(
+                advisory_content=full_content[:2000]  # Limit content to avoid token limits
+            )
+            
+            response = _self.llm.complete(summary_prompt)
+            print(f"Generated Advisory for {advisory_id}: {response.text.strip()}")
+            return response.text.strip()
+        except Exception as e:
+            # Fallback to cleaned HTML if LLM fails
+            return _self.clean_html_text(full_content, max_length=200)
+
+    def display_advisory_card(self, advisory):
+        """Display an advisory as a card with MITRE ATT&CK mapping"""
+        # Check if we have a cached summary first, otherwise generate one
+        advisory_id = advisory.get('id', 'unknown')
+        
+        # Try to get cached summary from advisory data first
+        if 'llm_summary' in advisory and advisory['llm_summary']:
+            clean_summary = advisory['llm_summary']
+        else:
+            # Generate LLM summary (cached by advisory ID)
+            if self.llm:
+                clean_summary = self.generate_summary(advisory_id, advisory.get('summary', ''))
+            else:
+                # Fallback to cleaned HTML
+                clean_summary = self.clean_html_text(advisory.get('summary', ''), max_length=400)
+        
+        # Clean and escape the title to prevent formatting issues
+        clean_title = self.clean_html_text(advisory.get('title', 'No Title'), max_length=100)
+        
+        # Get MITRE techniques (removed confidence)
+        mitre_techniques = advisory.get('mitre_techniques', [])
+        
+        # Create MITRE techniques HTML (without confidence)
+        mitre_html = ""
+        if mitre_techniques:
+            mitre_html = "<div style='margin: 0.5rem 0;'><strong>MITRE ATT&CK:</strong><br>"
+            for technique in mitre_techniques:
+                mitre_html += f'<span class="mitre-technique">{technique}</span>'
+            mitre_html += "</div>"
+        
+        with st.container():
+            st.markdown(f"""
+            <div class="advisory-card">
+                <div class="advisory-title">{clean_title}</div>
+                <div class="advisory-meta">
+                    {advisory['id']} | Published: {advisory['published'][:10]}
+                </div>
+                <div class="advisory-summary">{clean_summary}</div>
+                {mitre_html}
+                <div style="margin-top: 0.5rem;">
+                    <a href="{advisory['link']}" target="_blank">View Full Advisory →</a>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
     
     def get_advisory_summary(self, limit: int = 4) -> List[Dict[str, Any]]:
         """
@@ -165,18 +274,7 @@ class ThreatIntelligenceAgent:
         Generate a comprehensive threat intelligence summary
         """
         try:
-            summary_query = """
-            Provide a comprehensive threat intelligence summary based on the latest ICS security advisories.
-            Include:
-            1. Overview of current threat landscape
-            2. Most critical vulnerabilities
-            3. Common attack patterns (MITRE ATT&CK techniques)
-            4. Recommended security measures
-            5. Key affected systems/vendors
-            
-            Format the response in a structured manner.
-            """
-            
-            return self.query(summary_query)
+            # Use the prompt template from constants
+            return self.query(THREAT_INTELLIGENCE_SUMMARY_PROMPT)
         except Exception as e:
             return f"Error generating threat intelligence summary: {str(e)}"
