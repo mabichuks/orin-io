@@ -2,17 +2,18 @@ from typing import List, Dict, Any
 from llama_index.core.agent import ReActAgent
 from llama_index.core.tools import QueryEngineTool, ToolMetadata
 from tools import create_advisory_fetch_tool, create_mitre_mapping_tool
-from indexmanager import IndexManager
 from constants import llm_model, ADVISORY_SUMMARY_PROMPT_TEMPLATE, THREAT_INTELLIGENCE_SUMMARY_PROMPT
 from bs4 import BeautifulSoup
+from indexmanager import IndexManager
 import re
 import streamlit as st
 
 class ThreatIntelligenceAgent:
-    def __init__(self):
+    def __init__(self, index):
         """Initialize the Threat Intelligence Agent"""
-        self.llm = llm_model
         self.index_manager = IndexManager()
+        self.llm = llm_model
+        self.index = index
         self.agent = None
         self.setup_agent()
     
@@ -27,9 +28,9 @@ class ThreatIntelligenceAgent:
         
         # Create tools list
         tools = [
-            query_engine_tool,
-            advisory_fetch_tool,
-            mitre_mapping_tool
+            query_engine_tool
+            # advisory_fetch_tool,
+            # mitre_mapping_tool
         ]
         
         # Create ReAct agent
@@ -42,10 +43,11 @@ class ThreatIntelligenceAgent:
     
     def create_query_engine_tool(self) -> QueryEngineTool:
         """Create a query engine tool from the vector index"""
-        query_engine = self.index_manager.get_query_engine()
-        
+        self.query_engine = self.index.as_query_engine(
+            llm_model=self.llm, similarity_top_k=5
+        )        
         return QueryEngineTool(
-            query_engine=query_engine,
+            query_engine=self.query_engine,
             metadata=ToolMetadata(
                 name="advisory_search",
                 description="Search and query ICS security advisories from CISA. "
@@ -53,6 +55,9 @@ class ThreatIntelligenceAgent:
                            "security issues, MITRE ATT&CK mappings, or threat intelligence."
             )
         )
+    
+    def chat(self, query: str):
+        return self.agent.chat(query)
     
     def query(self, question: str) -> str:
         """
@@ -193,23 +198,7 @@ class ThreatIntelligenceAgent:
         
         return summary_advisories
     
-    def refresh_knowledge_base(self, force_rebuild=False):
-        """
-        Refresh the knowledge base with latest advisories
-        """
-        result = self.index_manager.refresh_index(force_rebuild=force_rebuild)
-        self.setup_agent()  # Recreate agent with updated index
-        
-        if force_rebuild:
-            return "Knowledge base completely rebuilt successfully!"
-        else:
-            return "Knowledge base updated with latest advisories!"
     
-    def check_for_updates(self):
-        """
-        Check if there are new advisories available
-        """
-        return self.index_manager.check_for_updates()
     
     def get_cache_info(self):
         """

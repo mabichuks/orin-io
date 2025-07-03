@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 from collections import defaultdict, Counter
 from agent import ThreatIntelligenceAgent
 from constants import openai_api_key
+from style import UI_STYLE
+from indexmanager import IndexManager
 
 # Set page configuration
 st.set_page_config(
@@ -15,84 +17,7 @@ st.set_page_config(
 )
 
 # Custom CSS for better styling
-st.markdown("""
-<style>
-    .main-header {
-        text-align: center;
-        padding: 1rem 0;
-        background: linear-gradient(90deg, #1f4e79, #2e7bb8);
-        color: white;
-        border-radius: 10px;
-        margin-bottom: 2rem;
-    }
-    .advisory-card {
-        border: 1px solid #ddd;
-        border-radius: 8px;
-        padding: 1rem;
-        margin: 0.5rem 0;
-        background-color: #f8f9fa;
-        border-left: 4px solid #2e7bb8;
-        height: 100%;
-    }
-    .advisory-title {
-        font-weight: bold;
-        font-size: 1.1rem;
-        color: #1f4e79;
-        margin-bottom: 0.5rem;
-    }
-    .advisory-meta {
-        color: #666;
-        font-size: 0.9rem;
-        margin-bottom: 0.5rem;
-    }
-    .advisory-summary {
-        line-height: 1.5;
-    }
-    .mitre-technique {
-        background-color: #e3f2fd;
-        padding: 0.2rem 0.5rem;
-        border-radius: 4px;
-        margin: 0.2rem 0.2rem 0.2rem 0;
-        display: inline-block;
-        font-size: 0.85rem;
-        color: #1565c0;
-    }
-    .confidence-badge {
-        background-color: #4caf50;
-        color: white;
-        padding: 0.2rem 0.5rem;
-        border-radius: 12px;
-        font-size: 0.8rem;
-        margin-left: 0.5rem;
-    }
-    .confidence-medium {
-        background-color: #ff9800;
-    }
-    .confidence-low {
-        background-color: #f44336;
-    }
-    .chat-container {
-        background-color: #f8f9fa;
-        border-radius: 10px;
-        padding: 1rem;
-        margin-top: 1rem;
-    }
-    .metric-card {
-        background-color: #f8f9fa;
-        padding: 1rem;
-        border-radius: 8px;
-        border-left: 4px solid #2e7bb8;
-        margin: 0.5rem 0;
-    }
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 2rem;
-    }
-    .stTabs [data-baseweb="tab"] {
-        padding: 1rem 2rem;
-        font-size: 1.1rem;
-    }
-</style>
-""", unsafe_allow_html=True)
+st.markdown(UI_STYLE, unsafe_allow_html=True)
 
 def check_api_key():
     """Check if OpenAI API key is configured"""
@@ -104,10 +29,14 @@ def check_api_key():
 def initialize_agent():
     """Initialize the threat intelligence agent (cached)"""
     with st.spinner("Initializing system..."):
-        agent = ThreatIntelligenceAgent()
-        # Store agent in session state for access in other functions
-        st.session_state['agent'] = agent
-        return agent
+        index_manager = IndexManager()
+        index = index_manager.load_existing_index()
+        return ThreatIntelligenceAgent(index)
+
+if "agent" not in st.session_state:
+    st.session_state.agent = initialize_agent()
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
 def create_mitre_time_series(advisories):
     """Create time series data for MITRE ATT&CK techniques"""
@@ -166,6 +95,7 @@ def display_overview_tab(agent):
     try:
         advisories = agent.get_advisory_summary(limit=10)  # Get more for time series
         top_4_advisories = advisories[:4]  # Top 4 for grid display
+        print(f"Gotten advisory summaries {advisories}")
         
         if advisories:
             # Metrics row
@@ -279,7 +209,7 @@ def display_overview_tab(agent):
                         st.error(f"Error refreshing data: {str(e)}")
                         
     except Exception as e:
-        st.error(f"Error loading overview data: {str(e)}")
+        raise e
 
 def display_chat_tab(agent):
     """Display the AI Chat tab content"""
@@ -307,9 +237,9 @@ def display_chat_tab(agent):
             
             # Generate assistant response using RAG
             with st.chat_message("assistant"):
-                with st.spinner("Searching advisories..."):
+                with st.spinner("Thinking..."):
                     try:
-                        response = agent.rag_query(prompt)
+                        response = st.session_state.agent.chat(prompt)
                         st.markdown(response)
                         # Add assistant response to chat history
                         st.session_state.messages.append({"role": "assistant", "content": response})
@@ -341,51 +271,20 @@ def main():
     """, unsafe_allow_html=True)
     
     # Initialize agent
-    agent = initialize_agent()
+    # agent = initialize_agent()
     
     # Create tabs
     tab1, tab2 = st.tabs(["📊 Overview", "💬 AI Chat"])
     
     with tab1:
-        display_overview_tab(agent)
+        display_overview_tab(st.session_state.agent)
     
     with tab2:
-        display_chat_tab(agent)
+        display_chat_tab(st.session_state.agent)
     
     # Footer with system controls
     st.markdown("---")
     
-    col1, col2, col3 = st.columns([1, 1, 1])
-    
-    with col1:
-        try:
-            cache_info = agent.get_cache_info()
-            if cache_info['status'] == 'loaded':
-                st.info(f"📊 **System Status**: {cache_info['count']} advisories loaded")
-            else:
-                st.warning("📊 **System Status**: No data loaded")
-        except:
-            st.error("📊 **System Status**: Error")
-    
-    with col2:
-        try:
-            update_info = agent.check_for_updates()
-            if update_info.get('has_updates', False):
-                st.warning(f"🔄 **Updates Available**: {update_info['new_count']} new advisories")
-            else:
-                st.success("✅ **System Up-to-date**")
-        except:
-            st.info("🔄 **Update Status**: Unknown")
-    
-    with col3:
-        if st.button("🔄 Refresh System", help="Fetch latest advisories and rebuild index"):
-            with st.spinner("Refreshing system..."):
-                try:
-                    result = agent.refresh_knowledge_base()
-                    st.success("✅ System refreshed successfully!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ Refresh failed: {str(e)}")
     
     # Footer
     st.markdown("""

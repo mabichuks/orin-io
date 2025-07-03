@@ -1,5 +1,4 @@
 import os
-
 from dotenv import load_dotenv
 from llama_index.embeddings.openai import OpenAIEmbedding, OpenAIEmbeddingModelType
 from llama_index.llms.openai import OpenAI
@@ -18,7 +17,7 @@ VECTOR_STORE_PATH = "vector_store/"
 INDEX_PERSIST_PATH = "index/"
 
 # Number of advisories to process
-MAX_ADVISORIES = 10
+MAX_ADVISORIES = 60
 
 
 # Enhanced MITRE ATT&CK mapping prompt template
@@ -40,22 +39,25 @@ Instructions:
 2. Map to 1-3 most relevant techniques from the candidates provided
 
 Only respond with a valid JSON object in this exact format and nothig else
-
-{
+{{
   "type": "object",
-  "properties": {
-    "mapped_techniques": {
+  "properties": {{
+    "mapped_techniques": {{
       "type": "array",
       "description": "List of MITRE ATT&CK technique IDs that apply the MOST to the advisory. This could be zero, one or more techniques but should not exceed three.",
       "maxItems": 3,
-      "items": {
+      "items": {{
         "type": "string",
         "description": "MITRE ATT&CK technique ID, e.g., T1234"
-      }
-    }
-  }
-}
+      }}
+    }}
+  }}
+}}
+
+do not include any addtional text in your response such as markdown like ```json, only the JSON object as described above.
 """
+
+
 
 # Advisory summary generation prompt template
 ADVISORY_SUMMARY_PROMPT_TEMPLATE = """
