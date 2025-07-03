@@ -4,6 +4,10 @@ import json
 from datetime import datetime
 from typing import List, Dict, Any
 from llama_index.core.tools import FunctionTool
+from tiktoken import get_encoding
+import numpy as np
+from bs4 import BeautifulSoup
+
 from constants import (
     CISA_ICS_RSS_URL, 
     MAX_ADVISORIES, 
@@ -35,36 +39,53 @@ def create_mitre_embeddings(embed_model):
     
     return mitre_embeddings
 
+def get_mean_embedding(text: str, chunk_size: int = 1000):
+    encoding = get_encoding("cl100k_base")
+    tokens = encoding.encode(text)
+
+    chunks = [tokens[i:i + chunk_size] for i in range(0, len(tokens), chunk_size)]
+    embeddings = []
+
+    for chunk in chunks:
+        chunk_text = encoding.decode(chunk)
+        embedding_obj = embed_model.get_text_embedding(chunk_text)
+        
+        # Convert Embedding object to list of floats
+        if hasattr(embedding_obj, 'embedding'):
+            emb_list = embedding_obj.embedding
+        else:
+            emb_list = embedding_obj  # In case it's already a list
+
+        embeddings.append(np.array(emb_list))
+
+    # Average the vectors
+    return np.mean(embeddings, axis=0)
+
 
 def find_similar_mitre_techniques(advisory_content: str, mitre_embeddings: Dict, top_k: int = 5):
     """
     Find top-k most similar MITRE ATT&CK techniques using embedding similarity
-    """
-    import numpy as np
-    from typing import List, Tuple
-    
-    # Generate embedding for advisory content
-    advisory_embedding = embed_model.get_text_embedding(advisory_content)
-    
-    # Calculate cosine similarity with all MITRE techniques
+    """    
+    # Get averaged embedding for potentially long advisory content
+    advisory_embedding = get_mean_embedding(advisory_content)
+    advisory_emb = np.array(advisory_embedding)
+
     similarities = []
-    
+
     for technique_id, data in mitre_embeddings.items():
         mitre_emb = np.array(data['embedding'])
-        advisory_emb = np.array(advisory_embedding)
-        
-        # Cosine similarity
+
+        # Cosine similarity with safeguard against divide-by-zero
         cosine_sim = np.dot(mitre_emb, advisory_emb) / (
-            np.linalg.norm(mitre_emb) * np.linalg.norm(advisory_emb)
+            np.linalg.norm(mitre_emb) * np.linalg.norm(advisory_emb) + 1e-8
         )
-        
+
         similarities.append({
             'technique_id': technique_id,
             'similarity': float(cosine_sim),
             'details': data['details']
         })
-    
-    # Sort by similarity and return top-k
+
     similarities.sort(key=lambda x: x['similarity'], reverse=True)
     return similarities[:top_k]
 
@@ -118,6 +139,32 @@ def map_to_mitre_attack(advisory_content: str, mitre_embeddings=None) -> Dict[st
         print(f"Error in map_to_mitre_attack: {e}")
 
 
+def extract_vulnerability_overview(html_content: str) -> str:
+    """
+    Extract the vulnerability overview section using Beautiful Soup
+    """
+    soup = BeautifulSoup(html_content, 'html.parser')
+    
+    # Look for the vulnerability overview heading
+    vuln_heading = soup.find('h3', string=lambda text: text and 'vulnerability overview' in text.lower())
+    
+    if vuln_heading:
+        # Get all content between this heading and the next h3
+        content_parts = []
+        for sibling in vuln_heading.next_siblings:
+            if sibling.name == 'h3':
+                break
+            if hasattr(sibling, 'get_text'):
+                content_parts.append(sibling.get_text(strip=True))
+            elif isinstance(sibling, str):
+                content_parts.append(sibling.strip())
+        
+        vulnerability_text = ' '.join(content_parts).strip()
+        if vulnerability_text:
+            return vulnerability_text
+    
+    return "Vulnerability overview not found"
+
 def fetch_cisa_advisories() -> List[Dict[str, Any]]:
     """
     Fetch ICS security advisories from CISA RSS feed
@@ -128,16 +175,21 @@ def fetch_cisa_advisories() -> List[Dict[str, Any]]:
         
         advisories = []
         for i, entry in enumerate(feed.entries[:MAX_ADVISORIES]):
+            content = entry.get('summary', '') + ' ' + entry.get('title', '')
+            vulnerability_overview = extract_vulnerability_overview(content)
             advisory = {
                 'id': entry.get('id', f'advisory_{i}'),
                 'title': entry.get('title', 'No Title'),
                 'summary': entry.get('summary', 'No Summary'),
                 'link': entry.get('link', ''),
                 'published': entry.get('published', str(datetime.now())),
-                'content': entry.get('summary', '') + ' ' + entry.get('title', '')
+                'content': entry.get('summary', '') + ' ' + entry.get('title', ''),
+                'vulnerability_overview': vulnerability_overview
+                
             }
             advisories.append(advisory)
             print(f"Fetched advisory {i+1}: {advisory['title']}")
+            print(f"Vulnerability Overview {advisory['vulnerability_overview']}")
             
         return advisories
         

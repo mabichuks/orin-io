@@ -29,9 +29,9 @@ def check_api_key():
 def initialize_agent():
     """Initialize the threat intelligence agent (cached)"""
     with st.spinner("Initializing system..."):
-        index_manager = IndexManager()
+        index_manager = IndexManager("ai-cti")
         index = index_manager.load_existing_index()
-        return ThreatIntelligenceAgent(index)
+        return ThreatIntelligenceAgent(index, index_manager)
 
 if "agent" not in st.session_state:
     st.session_state.agent = initialize_agent()
@@ -239,10 +239,11 @@ def display_chat_tab(agent):
             with st.chat_message("assistant"):
                 with st.spinner("Thinking..."):
                     try:
-                        response = st.session_state.agent.chat(prompt)
-                        st.markdown(response)
+                        answer = st.session_state.agent.chat(prompt).response
+                        print(f"Answer from Assistant {answer}")
+                        st.markdown(answer)
                         # Add assistant response to chat history
-                        st.session_state.messages.append({"role": "assistant", "content": response})
+                        st.session_state.messages.append({"role": "assistant", "content": answer})
                     except Exception as e:
                         error_msg = f"Error processing query: {str(e)}"
                         st.error(error_msg)

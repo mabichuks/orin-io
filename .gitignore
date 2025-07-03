@@ -170,4 +170,9 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-
+#index files
+index/default__vector_store.json
+index/docstore.json
+index/graph_store.json
+index/image__vector_store.json
+index/index_store.json

@@ -21,12 +21,9 @@ class IndexManager:
         self.storage_context = StorageContext.from_defaults(
             vector_store=self.vector_store
         )
-        
         self.llm = Settings.llm
         self.embed_model = Settings.embed_model
-        self.index = None
         self.advisories_data = []
-        self.storage_context = StorageContext.from_defaults(persist_dir=INDEX_PERSIST_PATH)
         
         # Load MITRE techniques from JSON file
         print("Loading MITRE ATT&CK techniques from file...")
@@ -34,15 +31,16 @@ class IndexManager:
             mitre_data = json.load(f)
         self.mitre_techniques = mitre_data
         
-        # Initialize MITRE embeddings for enhanced mapping
-        print("Initializing MITRE ATT&CK embeddings...")
-        self.mitre_embeddings = create_mitre_embeddings(self.embed_model)
-        print(f"Created embeddings for {len(self.mitre_embeddings)} MITRE techniques")
     
     def create_index(self) -> VectorStoreIndex:
         """
         Create a new vector store index with CISA advisories
         """
+        # Initialize MITRE embeddings for enhanced mapping
+        print("Initializing MITRE ATT&CK embeddings...")
+        self.mitre_embeddings = create_mitre_embeddings(self.embed_model)
+        print(f"Created embeddings for {len(self.mitre_embeddings)} MITRE techniques")
+
         print("Fetching CISA advisories...")
         advisories = fetch_cisa_advisories()
         
@@ -53,7 +51,7 @@ class IndexManager:
         for advisory in advisories:
             # Map to MITRE ATT&CK techniques using enhanced two-stage approach
             mitre_mapping = map_to_mitre_attack(
-                advisory['content'], 
+                advisory['vulnerability_overview'], 
                 self.mitre_embeddings,
             )
             
@@ -94,7 +92,7 @@ class IndexManager:
             processed_advisories.append(advisory_data)
         
         print("Creating vector store index...")
-        self.index = VectorStoreIndex.from_documents(documents, embed_model=self.embed_model)
+        self.index = VectorStoreIndex.from_documents(documents, embed_model=self.embed_model, storage_context=self.storage_context)
         self.advisories_data = processed_advisories
         self.persist_index()
 
@@ -133,18 +131,19 @@ class IndexManager:
         """
         try:
             print("Loading existing index...")
-            storage_context = StorageContext.from_defaults(persist_dir=INDEX_PERSIST_PATH)
-            self.index = load_index_from_storage(storage_context, embed_model=self.embed_model) 
             metadata_path = os.path.join(INDEX_PERSIST_PATH, "advisories_metadata.json")
             if os.path.exists(metadata_path):
                 with open(metadata_path, 'r') as f:
                     self.advisories_data = json.load(f)  
-            return self.index
+            self.index = VectorStoreIndex.from_vector_store(
+            vector_store=self.vector_store, embed_model=self.embed_model
+             )
+            return self.index 
 
         except Exception as e:
             print(f"Error loading index: {e}")
             print("Creating new index...")
-            return self.create_index()
+            #return self.create_index()
     
     
     def get_index(self) -> VectorStoreIndex:
@@ -176,15 +175,11 @@ class IndexManager:
         """
         Persist the index to storage
         """
-        if self.index:
-            print("Persisting index to storage...")
-            self.index.storage_context.persist(persist_dir=INDEX_PERSIST_PATH)
-            
-            # Save advisory metadata
-            metadata_path = os.path.join(INDEX_PERSIST_PATH, "advisories_metadata.json")
-            os.makedirs(INDEX_PERSIST_PATH, exist_ok=True)
-            with open(metadata_path, 'w') as f:
-                json.dump(self.advisories_data, f, indent=2)
+        # Save advisory metadata
+        metadata_path = os.path.join(INDEX_PERSIST_PATH, "advisories_metadata.json")
+        os.makedirs(INDEX_PERSIST_PATH, exist_ok=True)
+        with open(metadata_path, 'w') as f:
+            json.dump(self.advisories_data, f, indent=2)
     
     def get_advisories_data(self) -> List[Dict[str, Any]]:
         """
@@ -193,11 +188,11 @@ class IndexManager:
         if not self.advisories_data:
             # Try to load from file
             metadata_path = os.path.join(INDEX_PERSIST_PATH, "advisories_metadata.json")
-            if os.path.exists(metadata_path):
-                with open(metadata_path, 'r') as f:
-                    self.advisories_data = json.load(f)
-            else:
+            #if os.path.exists(metadata_path):
+            with open(metadata_path, 'r') as f:
+                self.advisories_data = json.load(f)
+            #else:
                 # Create new index if no data available
-                self.create_index()
+                #self.create_index()
         
         return self.advisories_data

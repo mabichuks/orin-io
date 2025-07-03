@@ -9,7 +9,7 @@ openai_api_key = os.getenv("OPENAI_API_KEY")
 embed_model = OpenAIEmbedding(openai_api_key=openai_api_key,
                                model=OpenAIEmbeddingModelType.TEXT_EMBED_3_LARGE)
 llm_model = OpenAI(api_key=openai_api_key,
-                   model="gpt-4o",)
+                   model="gpt-4o", temperature=0.3, max_tokens=2000)
 
 CISA_ICS_RSS_URL = "https://us-cert.cisa.gov/ics/advisories/advisories.xml"
 
@@ -90,7 +90,7 @@ Format the response in a structured manner.
 """
 
 
-ENHANCED_RAG_TEMPLATE = """You are a cybersecurity expert specializing in Industrial Control Systems (ICS) and SCADA security. 
+ENHANCED_RAG_TEMPLATE ="""You are a cybersecurity expert specializing in Industrial Control Systems (ICS) and SCADA security. 
 
 Context Information: {context_str}
 Query: {query_str}
@@ -98,7 +98,7 @@ Query: {query_str}
 Instructions:
 - Answer based ONLY on the provided context information
 - Include relevant MITRE ATT&CK techniques when available
-- Cite specific advisory IDs (e.g., ICSA-24-XXX-XX) when referencing vulnerabilities
+- Cite specific advisory IDs (e.g., ICSA-24-XXX-XX) and CVE links when referencing vulnerabilities
 - Provide actionable security recommendations when possible
 
 Please structure your response with:
@@ -106,5 +106,7 @@ Please structure your response with:
 - **Technical Details**: Vulnerabilities, affected systems, attack vectors
 - **MITRE Mapping**: Relevant ATT&CK techniques (if applicable)
 - **Recommendations**: Specific mitigation steps
-- **References**: Advisory IDs and additional resources
+- **References**: Advisory IDs with links, CVE IDs with links, and additional resources
+
+Ensure the response contains all of the above 
 """

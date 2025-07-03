@@ -5,13 +5,16 @@ from tools import create_advisory_fetch_tool, create_mitre_mapping_tool
 from constants import llm_model, ADVISORY_SUMMARY_PROMPT_TEMPLATE, THREAT_INTELLIGENCE_SUMMARY_PROMPT
 from bs4 import BeautifulSoup
 from indexmanager import IndexManager
+from llama_index.core.prompts import PromptTemplate
+from constants import ENHANCED_RAG_TEMPLATE
+from llama_index.core.response_synthesizers import ResponseMode
 import re
 import streamlit as st
 
 class ThreatIntelligenceAgent:
-    def __init__(self, index):
+    def __init__(self, index, index_manager):
         """Initialize the Threat Intelligence Agent"""
-        self.index_manager = IndexManager()
+        self.index_manager = index_manager
         self.llm = llm_model
         self.index = index
         self.agent = None
@@ -43,21 +46,24 @@ class ThreatIntelligenceAgent:
     
     def create_query_engine_tool(self) -> QueryEngineTool:
         """Create a query engine tool from the vector index"""
+        qa_prompt = PromptTemplate(ENHANCED_RAG_TEMPLATE)
+
         self.query_engine = self.index.as_query_engine(
-            llm_model=self.llm, similarity_top_k=5
+            llm_model=self.llm, similarity_top_k=5, response_mode=ResponseMode.TREE_SUMMARIZE, text_qa_template=qa_prompt
         )        
-        return QueryEngineTool(
+        return QueryEngineTool.from_defaults(
             query_engine=self.query_engine,
-            metadata=ToolMetadata(
-                name="advisory_search",
-                description="Search and query ICS security advisories from CISA. "
+            name="advisory_search",
+            description="Search and query ICS security advisories from CISA. "
                            "Use this to find information about specific vulnerabilities, "
                            "security issues, MITRE ATT&CK mappings, or threat intelligence."
-            )
         )
     
     def chat(self, query: str):
-        return self.agent.chat(query)
+        prompt = f"""
+        {query}. Ensure your final response is well structured, well detailed and contains the CVE ID links, advisory links and any additional resources
+        """
+        return self.agent.chat(prompt)
     
     def query(self, question: str) -> str:
         """
