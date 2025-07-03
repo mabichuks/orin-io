@@ -16,38 +16,8 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Custom CSS for better styling and fixed chat
+# Custom CSS for better styling
 st.markdown(UI_STYLE, unsafe_allow_html=True)
-
-# Additional CSS to fix chat positioning
-st.markdown("""
-<style>
-    /* Fix chat input positioning */
-    .stChatInput {
-        position: fixed !important;
-        bottom: 0 !important;
-        left: 0 !important;
-        right: 0 !important;
-        z-index: 999 !important;
-        background: white !important;
-        border-top: 1px solid #ddd !important;
-        padding: 1rem !important;
-    }
-    
-    /* Add padding to chat container to prevent overlap */
-    .chat-container {
-        padding-bottom: 100px !important;
-        margin-bottom: 1rem !important;
-    }
-    
-    /* Ensure chat messages are scrollable */
-    .chat-messages {
-        max-height: 60vh !important;
-        overflow-y: auto !important;
-        margin-bottom: 2rem !important;
-    }
-</style>
-""", unsafe_allow_html=True)
 
 def check_api_key():
     """Check if OpenAI API key is configured"""
@@ -63,53 +33,46 @@ def initialize_agent():
         index = index_manager.load_existing_index()
         return ThreatIntelligenceAgent(index, index_manager)
 
-# Initialize session state variables
 if "agent" not in st.session_state:
     st.session_state.agent = initialize_agent()
 if "messages" not in st.session_state:
     st.session_state.messages = []
-if "current_tab" not in st.session_state:
-    st.session_state.current_tab = 0
 
-def create_mitre_pie_chart(advisories):
-    """Create pie chart for MITRE ATT&CK techniques"""
-    all_techniques = []
-    for adv in advisories:
-        all_techniques.extend(adv.get('mitre_techniques', []))
+def create_mitre_time_series(advisories):
+    """Create time series data for MITRE ATT&CK techniques"""
+    if not advisories:
+        return pd.DataFrame()
     
-    if all_techniques:
-        technique_counts = Counter(all_techniques)
-        techniques = list(technique_counts.keys())
-        frequencies = list(technique_counts.values())
-        
-        fig = px.pie(
-            values=frequencies,
-            names=techniques,
-            title='Distribution of MITRE ATT&CK Techniques in Security Advisories',
-            labels={'names': 'MITRE Technique', 'values': 'Frequency'},
-            height=500
-        )
-        
-        fig.update_traces(
-            textposition='inside',
-            textinfo='percent+label',
-            hovertemplate='<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}<extra></extra>'
-        )
-        
-        fig.update_layout(
-            showlegend=True,
-            legend=dict(
-                orientation="v",
-                yanchor="top",
-                y=1,
-                xanchor="left",
-                x=1.01
-            ),
-            margin=dict(t=50, b=50, l=50, r=150)
-        )
-        
-        return fig
-    return None
+    # Prepare data for time series
+    time_series_data = []
+    
+    for advisory in advisories:
+        try:
+            # Parse the published date
+            published_date = pd.to_datetime(advisory['published']).date()
+            mitre_techniques = advisory.get('mitre_techniques', [])
+            
+            # Add each technique as a separate row
+            for technique in mitre_techniques:
+                time_series_data.append({
+                    'date': published_date,
+                    'technique': technique,
+                    'advisory_id': advisory['id']
+                })
+        except Exception as e:
+            print(f"Error processing advisory {advisory.get('id', 'unknown')}: {e}")
+            continue
+    
+    if not time_series_data:
+        return pd.DataFrame()
+    
+    # Create DataFrame
+    df = pd.DataFrame(time_series_data)
+    
+    # Group by date and technique, count occurrences
+    df_grouped = df.groupby(['date', 'technique']).size().reset_index(name='count')
+    
+    return df_grouped
 
 def display_advisory_grid(agent, advisories):
     """Display advisories in a grid format"""
@@ -117,18 +80,22 @@ def display_advisory_grid(agent, advisories):
         st.warning("No advisories found.")
         return
     
+    # Create grid layout (2 columns)
     cols = st.columns(2)
+    
     for i, advisory in enumerate(advisories):
         with cols[i % 2]:
             agent.display_advisory_card(advisory)
 
-def display_overview_tab():
+def display_overview_tab(agent):
     """Display the Overview tab content"""
     st.header("📊 Security Overview Dashboard")
     
+    # Get advisories data
     try:
-        advisories = st.session_state.agent.get_advisory_summary(limit=10)
-        top_4_advisories = advisories[:4]
+        advisories = agent.get_advisory_summary(limit=30)  # Get more for analysis
+        top_4_advisories = advisories[:4]  # Top 4 for grid display
+        print(f"Gotten advisory summaries {advisories}")
         
         if advisories:
             # Metrics row
@@ -138,6 +105,7 @@ def display_overview_tab():
                 st.metric("📋 Total Advisories", len(advisories))
             
             with col2:
+                # Count unique MITRE techniques
                 all_techniques = []
                 for adv in advisories:
                     all_techniques.extend(adv.get('mitre_techniques', []))
@@ -145,6 +113,7 @@ def display_overview_tab():
                 st.metric("🎯 MITRE Techniques", unique_techniques)
             
             with col3:
+                # Get latest advisory date
                 try:
                     latest_date = max(pd.to_datetime(adv['published']).date() for adv in advisories)
                     st.metric("📅 Latest Advisory", latest_date.strftime("%Y-%m-%d"))
@@ -152,6 +121,7 @@ def display_overview_tab():
                     st.metric("📅 Latest Advisory", "Unknown")
             
             with col4:
+                # Most common technique
                 technique_counts = Counter(all_techniques)
                 if technique_counts:
                     most_common = technique_counts.most_common(1)[0][0]
@@ -164,8 +134,42 @@ def display_overview_tab():
             # MITRE ATT&CK Techniques Pie Chart
             st.subheader("🎯 MITRE ATT&CK Techniques Distribution")
             
-            fig = create_mitre_pie_chart(advisories)
-            if fig:
+            if all_techniques:
+                # Count technique frequencies
+                technique_counts = Counter(all_techniques)
+                
+                # Prepare data for pie chart
+                techniques = list(technique_counts.keys())
+                frequencies = list(technique_counts.values())
+                
+                # Create pie chart
+                fig = px.pie(
+                    values=frequencies,
+                    names=techniques,
+                    title='Distribution of MITRE ATT&CK Techniques in Security Advisories',
+                    labels={'names': 'MITRE Technique', 'values': 'Frequency'},
+                    height=500
+                )
+                
+                # Customize the pie chart
+                fig.update_traces(
+                    textposition='inside',
+                    textinfo='percent+label',
+                    hovertemplate='<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}<extra></extra>'
+                )
+                
+                fig.update_layout(
+                    showlegend=True,
+                    legend=dict(
+                        orientation="v",
+                        yanchor="top",
+                        y=1,
+                        xanchor="left",
+                        x=1.01
+                    ),
+                    margin=dict(t=50, b=50, l=50, r=150)
+                )
+                
                 st.plotly_chart(fig, use_container_width=True)
                 
                 # Additional insights
@@ -173,7 +177,7 @@ def display_overview_tab():
                 
                 with col1:
                     st.subheader("🔍 Top MITRE Techniques")
-                    technique_counts = Counter(all_techniques)
+                    
                     if technique_counts:
                         for technique, count in technique_counts.most_common(5):
                             percentage = (count / len(all_techniques)) * 100
@@ -193,6 +197,7 @@ def display_overview_tab():
                         avg_per_technique = total_techniques / unique_count
                         st.write(f"**Average per technique**: {avg_per_technique:.1f}")
                         
+                        # Show technique coverage
                         if technique_counts:
                             most_frequent = technique_counts.most_common(1)[0]
                             st.write(f"**Most frequent**: {most_frequent[0]} ({most_frequent[1]} times)")
@@ -203,69 +208,69 @@ def display_overview_tab():
             
             # Latest advisories grid
             st.subheader("🆕 Latest Security Advisories")
-            display_advisory_grid(st.session_state.agent, top_4_advisories)
+            display_advisory_grid(agent, top_4_advisories)
             
         else:
             st.warning("No advisories found. The system may need to fetch new data.")
-            
+            if st.button("🔄 Refresh Data"):
+                with st.spinner("Fetching latest advisories..."):
+                    try:
+                        agent.refresh_knowledge_base()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error refreshing data: {str(e)}")
+                        
     except Exception as e:
-        st.error(f"Error loading overview: {str(e)}")
+        raise e
 
-def display_chat_tab():
-    """Display the AI Chat tab content with improved state management"""
+def display_chat_tab(agent):
+    """Display the AI Chat tab content"""
     st.header("💬 AI Security Assistant")
     
-    # Create a container for chat messages with fixed height
-    chat_container = st.container()
+    # Initialize chat history
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
     
-    with chat_container:
-        # Display existing messages
-        if st.session_state.messages:
-            for i, message in enumerate(st.session_state.messages):
-                with st.chat_message(message["role"]):
-                    st.markdown(message["content"])
-    
-    # Handle new messages with a form to prevent page refresh
-    with st.form(key="chat_form", clear_on_submit=True):
-        col1, col2 = st.columns([6, 1])
-        with col1:
-            user_input = st.text_input(
-                "Ask about ICS security advisories, vulnerabilities, or threats...",
-                key="user_input",
-                label_visibility="collapsed"
-            )
-        with col2:
-            submitted = st.form_submit_button("Send", use_container_width=True)
-    
-    # Process the message if submitted
-    if submitted and user_input:
-        # Add user message
-        st.session_state.messages.append({"role": "user", "content": user_input})
+    # Chat interface in a container
+    with st.container():
+        st.markdown('<div class="chat-container">', unsafe_allow_html=True)
         
-        # Display user message
-        with st.chat_message("user"):
-            st.markdown(user_input)
+        # Display chat messages from history
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
         
-        # Generate and display assistant response
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                try:
-                    answer = st.session_state.agent.chat(user_input).response
-                    st.markdown(answer)
-                    st.session_state.messages.append({"role": "assistant", "content": answer})
-                except Exception as e:
-                    error_msg = f"Error processing query: {str(e)}"
-                    st.error(error_msg)
-                    st.session_state.messages.append({"role": "assistant", "content": error_msg})
+        # Chat input - this will handle the submission automatically
+        if prompt := st.chat_input("Ask about ICS security advisories, vulnerabilities, or threats..."):
+            # Display user message immediately
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            
+            # Add user message to history
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            
+            # Generate and display assistant response
+            with st.chat_message("assistant"):
+                with st.spinner("Thinking..."):
+                    try:
+                        answer = st.session_state.agent.chat(prompt).response
+                        print(f"Answer from Assistant {answer}")
+                        st.markdown(answer)
+                        # Add assistant response to chat history
+                        st.session_state.messages.append({"role": "assistant", "content": answer})
+                    except Exception as e:
+                        error_msg = f"Error processing query: {str(e)}"
+                        st.error(error_msg)
+                        st.session_state.messages.append({"role": "assistant", "content": error_msg})
         
-        # Force rerun to show new messages
-        st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
     
-    # Clear chat button
+    # Chat controls (moved outside the container)
     if st.session_state.messages:
-        if st.button("🗑️ Clear Chat", key="clear_chat"):
+        if st.button("🗑️ Clear Chat", key="clear_chat_btn"):
             st.session_state.messages = []
             st.rerun()
+
 
 def main():
     # Check API key
@@ -279,28 +284,19 @@ def main():
     </div>
     """, unsafe_allow_html=True)
     
-    # Create tabs and handle selection
-    tab_names = ["📊 Overview", "💬 AI Chat"]
+    # Create tabs - Streamlit handles tab state automatically
+    tab1, tab2 = st.tabs(["📊 Overview", "💬 AI Chat"])
     
-    # Use selectbox instead of tabs for more stable state management
-    selected_tab = st.selectbox(
-        "Choose a section:",
-        options=tab_names,
-        index=st.session_state.get("current_tab", 0),
-        key="tab_selector"
-    )
+    with tab1:
+        display_overview_tab(st.session_state.agent)
     
-    # Update session state
-    st.session_state.current_tab = tab_names.index(selected_tab)
+    with tab2:
+        display_chat_tab(st.session_state.agent)
     
-    # Display content based on selection
-    if selected_tab == "📊 Overview":
-        display_overview_tab()
-    elif selected_tab == "💬 AI Chat":
-        display_chat_tab()
+    # Footer with system controls
+    st.markdown("---")
     
     # Footer
-    st.markdown("---")
     st.markdown("""
     <div style="text-align: center; color: #666; padding: 1rem; margin-top: 2rem;">
         <p>🛡️ ICS Security Advisory System | Data from CISA ICS Advisories</p>
