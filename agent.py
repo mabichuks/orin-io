@@ -49,7 +49,7 @@ class ThreatIntelligenceAgent:
         qa_prompt = PromptTemplate(ENHANCED_RAG_TEMPLATE)
 
         self.query_engine = self.index.as_query_engine(
-            llm_model=self.llm, similarity_top_k=5, text_qa_template=qa_prompt
+            llm_model=self.llm, similarity_top_k=5, text_qa_template=qa_prompt, response_mode="compact"
         )        
         return QueryEngineTool.from_defaults(
             query_engine=self.query_engine,
