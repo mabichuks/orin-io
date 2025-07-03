@@ -93,7 +93,7 @@ def display_overview_tab(agent):
     
     # Get advisories data
     try:
-        advisories = agent.get_advisory_summary(limit=10)  # Get more for time series
+        advisories = agent.get_advisory_summary(limit=30)  # Get more for analysis
         top_4_advisories = advisories[:4]  # Top 4 for grid display
         print(f"Gotten advisory summaries {advisories}")
         
@@ -131,32 +131,43 @@ def display_overview_tab(agent):
             
             st.markdown("---")
             
-            # Time series chart
-            st.subheader("📈 MITRE ATT&CK Techniques Timeline")
+            # MITRE ATT&CK Techniques Pie Chart
+            st.subheader("🎯 MITRE ATT&CK Techniques Distribution")
             
-            df_time_series = create_mitre_time_series(advisories)
-            
-            if not df_time_series.empty:
-                # Create time series plot
-                fig = px.line(
-                    df_time_series, 
-                    x='date', 
-                    y='count',
-                    color='technique',
-                    title='MITRE ATT&CK Techniques Over Time',
-                    labels={
-                        'date': 'Publication Date',
-                        'count': 'Number of Advisories',
-                        'technique': 'MITRE Technique'
-                    },
-                    height=400
+            if all_techniques:
+                # Count technique frequencies
+                technique_counts = Counter(all_techniques)
+                
+                # Prepare data for pie chart
+                techniques = list(technique_counts.keys())
+                frequencies = list(technique_counts.values())
+                
+                # Create pie chart
+                fig = px.pie(
+                    values=frequencies,
+                    names=techniques,
+                    title='Distribution of MITRE ATT&CK Techniques in Security Advisories',
+                    labels={'names': 'MITRE Technique', 'values': 'Frequency'},
+                    height=500
+                )
+                
+                # Customize the pie chart
+                fig.update_traces(
+                    textposition='inside',
+                    textinfo='percent+label',
+                    hovertemplate='<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}<extra></extra>'
                 )
                 
                 fig.update_layout(
-                    xaxis_title="Publication Date",
-                    yaxis_title="Number of Advisories",
-                    legend_title="MITRE ATT&CK Techniques",
-                    hovermode='x unified'
+                    showlegend=True,
+                    legend=dict(
+                        orientation="v",
+                        yanchor="top",
+                        y=1,
+                        xanchor="left",
+                        x=1.01
+                    ),
+                    margin=dict(t=50, b=50, l=50, r=150)
                 )
                 
                 st.plotly_chart(fig, use_container_width=True)
@@ -166,31 +177,32 @@ def display_overview_tab(agent):
                 
                 with col1:
                     st.subheader("🔍 Top MITRE Techniques")
-                    technique_summary = df_time_series.groupby('technique')['count'].sum().sort_values(ascending=False)
                     
-                    if not technique_summary.empty:
-                        for technique, count in technique_summary.head(5).items():
-                            st.write(f"**{technique}**: {count} advisories")
+                    if technique_counts:
+                        for technique, count in technique_counts.most_common(5):
+                            percentage = (count / len(all_techniques)) * 100
+                            st.write(f"**{technique}**: {count} advisories ({percentage:.1f}%)")
                     else:
                         st.write("No MITRE techniques mapped yet.")
                 
                 with col2:
-                    st.subheader("📊 Recent Activity")
-                    # Show activity in last 30 days
-                    recent_date = df_time_series['date'].max() - timedelta(days=30)
-                    recent_activity = df_time_series[df_time_series['date'] > recent_date]
+                    st.subheader("📊 Distribution Summary")
+                    total_techniques = len(all_techniques)
+                    unique_count = len(technique_counts)
                     
-                    if not recent_activity.empty:
-                        recent_count = recent_activity['count'].sum()
-                        st.write(f"**Last 30 days**: {recent_count} technique mappings")
+                    st.write(f"**Total technique instances**: {total_techniques}")
+                    st.write(f"**Unique techniques**: {unique_count}")
+                    
+                    if unique_count > 0:
+                        avg_per_technique = total_techniques / unique_count
+                        st.write(f"**Average per technique**: {avg_per_technique:.1f}")
                         
-                        # Most active technique recently
-                        recent_top = recent_activity.groupby('technique')['count'].sum().idxmax()
-                        st.write(f"**Most active**: {recent_top}")
-                    else:
-                        st.write("No recent activity in the last 30 days.")
+                        # Show technique coverage
+                        if technique_counts:
+                            most_frequent = technique_counts.most_common(1)[0]
+                            st.write(f"**Most frequent**: {most_frequent[0]} ({most_frequent[1]} times)")
             else:
-                st.info("No MITRE ATT&CK technique data available for time series analysis.")
+                st.info("No MITRE ATT&CK technique data available for analysis.")
             
             st.markdown("---")
             
@@ -215,27 +227,29 @@ def display_chat_tab(agent):
     """Display the AI Chat tab content"""
     st.header("💬 AI Security Assistant")
     
+    # Initialize chat history
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+    
     # Chat interface in a container
     with st.container():
         st.markdown('<div class="chat-container">', unsafe_allow_html=True)
         
-        # Initialize chat history
-        if "messages" not in st.session_state:
-            st.session_state.messages = []
-        
-        # Display chat messages
+        # Display chat messages from history
         for message in st.session_state.messages:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
         
-        # Chat input
+        # Chat input - this will handle the submission automatically
         if prompt := st.chat_input("Ask about ICS security advisories, vulnerabilities, or threats..."):
-            # Add user message to chat history
-            st.session_state.messages.append({"role": "user", "content": prompt})
+            # Display user message immediately
             with st.chat_message("user"):
                 st.markdown(prompt)
             
-            # Generate assistant response using RAG
+            # Add user message to history
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            
+            # Generate and display assistant response
             with st.chat_message("assistant"):
                 with st.spinner("Thinking..."):
                     try:
@@ -249,15 +263,14 @@ def display_chat_tab(agent):
                         st.error(error_msg)
                         st.session_state.messages.append({"role": "assistant", "content": error_msg})
         
-        # Chat controls
-        col1, col2 = st.columns([1, 4])
-        with col1:
-            if st.session_state.messages:
-                if st.button("🗑️ Clear Chat"):
-                    st.session_state.messages = []
-                    st.rerun()
-        
         st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Chat controls (moved outside the container)
+    if st.session_state.messages:
+        if st.button("🗑️ Clear Chat", key="clear_chat_btn"):
+            st.session_state.messages = []
+            st.rerun()
+
 
 def main():
     # Check API key
@@ -271,10 +284,7 @@ def main():
     </div>
     """, unsafe_allow_html=True)
     
-    # Initialize agent
-    # agent = initialize_agent()
-    
-    # Create tabs
+    # Create tabs - Streamlit handles tab state automatically
     tab1, tab2 = st.tabs(["📊 Overview", "💬 AI Chat"])
     
     with tab1:
@@ -285,7 +295,6 @@ def main():
     
     # Footer with system controls
     st.markdown("---")
-    
     
     # Footer
     st.markdown("""
