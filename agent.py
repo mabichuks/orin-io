@@ -126,7 +126,7 @@ class ThreatIntelligenceAgent:
         try:
             # Use the prompt template from constants
             summary_prompt = ADVISORY_SUMMARY_PROMPT_TEMPLATE.format(
-                advisory_content=full_content[:2000]  # Limit content to avoid token limits
+                advisory_content=full_content[:3000]  # Limit content to avoid token limits
             )
             
             response = _self.llm.complete(summary_prompt)

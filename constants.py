@@ -66,7 +66,7 @@ Provide a concise 2-3 sentence summary of this ICS security advisory. Focus on:
 - The risk
 - Affected systems or products
 - Summary of the vulnerabilities, including a CVE Id if available, the CVSS score, and the CVSS vector
-- CVE Id should be in a html link format like <a href="https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-12345">CVE-2023-12345</a>
+- CVE Id should be in a html link format like <a href="https://www.cve.org/CVERecord?id=CVE-ID">CVE-ID</a> where CVE-ID represents the actual CVE ID from the advisory
 - The potential impact
 - The mitigations
 
@@ -74,6 +74,7 @@ Advisory content:
 {advisory_content}
 
 Provide only the summary, no additional text:
+Ensure CVE-ID is replaced with the actual CVE ID from the advisory
 """
 
 # Threat intelligence summary prompt template
