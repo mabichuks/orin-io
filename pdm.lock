@@ -5,7 +5,7 @@
 groups = ["default"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:710092c1d49771d5d5d9655f3514a527d541d005dc6a04be98a7b194d53ad245"
+content_hash = "sha256:89d78147609a478b595313a186c6a78bc17fdccb15ec47fa0cd8931756157c30"
 
 [[metadata.targets]]
 requires_python = "==3.12.*"
@@ -1133,25 +1133,6 @@ dependencies = [
 files = [
     {file = "pinecone-7.3.0-py3-none-any.whl", hash = "sha256:315b8fef20320bef723ecbb695dec0aafa75d8434d86e01e5a0e85933e1009a8"},
     {file = "pinecone-7.3.0.tar.gz", hash = "sha256:307edc155621d487c20dc71b76c3ad5d6f799569ba42064190d03917954f9a7b"},
-]
-
-[[package]]
-name = "pinecone-client"
-version = "6.0.0"
-requires_python = "<4.0,>=3.9"
-summary = "Pinecone client (DEPRECATED)"
-groups = ["default"]
-dependencies = [
-    "certifi>=2019.11.17",
-    "pinecone-plugin-interface<0.0.8,>=0.0.7",
-    "python-dateutil>=2.5.3",
-    "typing-extensions>=3.7.4",
-    "urllib3>=1.26.0; python_version >= \"3.8\" and python_version < \"3.12\"",
-    "urllib3>=1.26.5; python_version ~= \"3.12\"",
-]
-files = [
-    {file = "pinecone_client-6.0.0-py3-none-any.whl", hash = "sha256:d81a9e73cae441e4ab6dfc9c1d8b51c9895dae2488cda64f3e21b9dfc10c8d94"},
-    {file = "pinecone_client-6.0.0.tar.gz", hash = "sha256:f224fc999205e4858c4737c40922bdf42d178b361c8859bc486ec00d45b359a9"},
 ]
 
 [[package]]
