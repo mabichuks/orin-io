@@ -22,18 +22,18 @@ class ThreatIntelligenceAgent:
     
     def setup_agent(self):
         """Setup the ReAct agent with tools"""
-        # Get query engine tool
-        query_engine_tool = self.create_query_engine_tool()
         
         # Get function tools
         advisory_fetch_tool = create_advisory_fetch_tool()
         mitre_mapping_tool = create_mitre_mapping_tool()
-        
+
+        # Get query engine tool
+
+        query_engine_tool = self.create_query_engine_tool()
+
         # Create tools list
         tools = [
             query_engine_tool
-            # advisory_fetch_tool,
-            # mitre_mapping_tool
         ]
         
         # Create ReAct agent
@@ -65,15 +65,6 @@ class ThreatIntelligenceAgent:
         """
         return self.agent.chat(prompt)
     
-    def query(self, question: str) -> str:
-        """
-        Query the agent with a question
-        """
-        try:
-            response = self.agent.chat(question)
-            return str(response)
-        except Exception as e:
-            return f"Error processing query: {str(e)}"
     
     def rag_query(self, query: str) -> str:
         """
@@ -145,20 +136,15 @@ class ThreatIntelligenceAgent:
         if 'llm_summary' in advisory and advisory['llm_summary']:
             clean_summary = advisory['llm_summary']
         else:
-            # Generate LLM summary (cached by advisory ID)
             if self.llm:
                 clean_summary = self.generate_summary(advisory_id, advisory.get('summary', ''))
             else:
-                # Fallback to cleaned HTML
                 clean_summary = self.clean_html_text(advisory.get('summary', ''), max_length=400)
         
-        # Clean and escape the title to prevent formatting issues
         clean_title = self.clean_html_text(advisory.get('title', 'No Title'), max_length=100)
         
-        # Get MITRE techniques (removed confidence)
         mitre_techniques = advisory.get('mitre_techniques', [])
         
-        # Create MITRE techniques HTML (without confidence)
         mitre_html = ""
         if mitre_techniques:
             mitre_html = "<div style='margin: 0.5rem 0;'><strong>MITRE ATT&CK:</strong><br>"
@@ -264,12 +250,3 @@ class ThreatIntelligenceAgent:
         
         return matching_advisories
     
-    def get_threat_intelligence_summary(self) -> str:
-        """
-        Generate a comprehensive threat intelligence summary
-        """
-        try:
-            # Use the prompt template from constants
-            return self.query(THREAT_INTELLIGENCE_SUMMARY_PROMPT)
-        except Exception as e:
-            return f"Error generating threat intelligence summary: {str(e)}"
